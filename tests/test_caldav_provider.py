@@ -165,7 +165,7 @@ async def test_delete_one_occurrence(setup) -> None:
     await provider.async_delete_event(CAL, "series-1", recurrence_id="20261111T090000Z")
     standups = [e for e in await _events(provider) if e.uid == "series-1"]
     assert [e.start.day for e in standups] == [10, 12, 13, 14]
-    master = icalendar.Calendar.from_ical(fake.objects["series-1"]).walk("VEVENT")[0]
+    master = icalendar.Calendar.from_ical(fake.ical_for("series-1")).walk("VEVENT")[0]
     assert "EXDATE" in master
 
 
@@ -183,7 +183,7 @@ async def test_delete_this_and_future_from_first_removes_series(setup) -> None:
     await provider.async_delete_event(
         CAL, "series-1", recurrence_id="20261110T090000Z", recurrence_range="THISANDFUTURE"
     )
-    assert "series-1" not in fake.objects
+    assert "series-1" not in fake.uids()
 
 
 async def test_override_survives_then_deleted(setup) -> None:
@@ -242,3 +242,44 @@ async def test_tzid_series_delete_and_cut(setup) -> None:
     )
     trainings = [e for e in await _events(provider) if e.uid == "berlin-1"]
     assert [e.start.day for e in trainings] == [16]
+
+
+async def test_icloud_rejects_uid_search_uses_url_from_read(hass) -> None:
+    """iCloud answers UID REPORT queries with 412; edits must not depend on them."""
+    await hass.config.async_set_time_zone("Europe/Berlin")
+    fake = FakeCalendar(reject_uid_search=True)
+    fake.add(SINGLE)
+    provider = CalDavProvider(hass, "https://caldav.example.com/", "u", "p")
+    provider._calendars[CAL] = fake
+    await _events(provider)  # learns the object URL
+    start = datetime(2026, 11, 13, 8, 30, tzinfo=UTC)
+    await provider.async_update_event(CAL, "single-1", _ev("Frau Stark", start, start + timedelta(minutes=75)))
+    dentist = next(e for e in await _events(provider) if e.uid == "single-1")
+    assert dentist.summary == "Frau Stark"
+    await provider.async_delete_event(CAL, "single-1")
+    assert "single-1" not in fake.uids()
+    assert fake.uid_searches == 0
+
+
+async def test_icloud_rejects_uid_search_without_prior_read(hass) -> None:
+    await hass.config.async_set_time_zone("Europe/Berlin")
+    fake = FakeCalendar(reject_uid_search=True)
+    fake.add(SERIES)
+    provider = CalDavProvider(hass, "https://caldav.example.com/", "u", "p")
+    provider._calendars[CAL] = fake
+    await provider.async_delete_event(CAL, "series-1", recurrence_id="20261111T090000Z")
+    days = [e.start.day for e in await _events(provider)]
+    assert days == [10, 12, 13, 14]
+
+
+async def test_created_event_editable_without_uid_search(hass) -> None:
+    await hass.config.async_set_time_zone("Europe/Berlin")
+    fake = FakeCalendar(reject_uid_search=True)
+    provider = CalDavProvider(hass, "https://caldav.example.com/", "u", "p")
+    provider._calendars[CAL] = fake
+    start = datetime(2026, 11, 20, 9, tzinfo=UTC)
+    await provider.async_create_event(CAL, _ev("Neu", start, start + timedelta(hours=1)))
+    (uid,) = fake.uids()
+    await provider.async_delete_event(CAL, uid)
+    assert not fake.uids()
+    assert fake.uid_searches == 0

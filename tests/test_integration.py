@@ -155,7 +155,7 @@ async def test_create_update_delete_like_dashboard(hass: HomeAssistant, entry, f
     })
     result = await client.receive_json()
     assert result["success"], result
-    assert zahnarzt["uid"] not in fake.objects
+    assert zahnarzt["uid"] not in fake.uids()
 
 
 async def test_dashboard_delete_one_occurrence(hass: HomeAssistant, entry, fake, hass_ws_client) -> None:

@@ -10,5 +10,5 @@
   "issue_tracker": "https://github.com/Caps3n/hass-calendar-sync/issues",
   "loggers": ["caldav"],
   "requirements": ["caldav>=1.4.0", "icalendar>=6.0.0", "recurring-ical-events>=3.0.0"],
-  "version": "0.1.0-beta.1"
+  "version": "0.1.0-beta.2"
 }

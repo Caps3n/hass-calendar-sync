@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timezone
 import logging
 from typing import Any, TypeVar
+from urllib.parse import quote, urljoin
 import uuid
 
 import caldav
@@ -180,6 +181,9 @@ class CalDavProvider(CalendarProvider):
             url=url, username=username, password=password, ssl_verify_cert=verify_ssl
         )
         self._calendars: dict[str, caldav.Calendar] = {}
+        # (calendar id, UID) -> object URL, learned while reading. iCloud rejects
+        # REPORT queries that filter by UID (412), so edits load objects by URL.
+        self._hrefs: dict[tuple[str, str], str] = {}
 
     async def _run(self, func: Callable[..., _T], *args: Any) -> _T:
         try:
@@ -224,6 +228,9 @@ class CalDavProvider(CalendarProvider):
         events: list[CalendarEvent] = []
         for obj in objects:
             cal = obj.icalendar_instance
+            if getattr(obj, "url", None) is not None:
+                for comp in cal.walk("VEVENT"):
+                    self._hrefs[(calendar_id, str(comp.get("UID")))] = str(obj.url)
             rrules = {
                 str(c.get("UID")): _rrule_str(c)
                 for c in cal.walk("VEVENT")
@@ -276,16 +283,50 @@ class CalDavProvider(CalendarProvider):
     # -- writing -----------------------------------------------------------
 
     def _create(self, calendar_id: str, event: EventData) -> None:
-        self._calendar(calendar_id).save_event(_new_calendar(_new_vevent(event)).to_ical().decode())
+        vevent = _new_vevent(event)
+        obj = self._calendar(calendar_id).save_event(_new_calendar(vevent).to_ical().decode())
+        if getattr(obj, "url", None) is not None:
+            self._hrefs[(calendar_id, str(vevent["UID"]))] = str(obj.url)
 
     async def async_create_event(self, calendar_id: str, event: EventData) -> None:
         await self._run(self._create, calendar_id, event)
 
     def _load(self, calendar_id: str, uid: str) -> caldav.Event:
+        """Find the object holding a UID, trying cheap lookups first."""
+        calendar = self._calendar(calendar_id)
+
+        def has_uid(obj: Any) -> bool:
+            return any(
+                str(c.get("UID")) == uid for c in obj.icalendar_instance.walk("VEVENT")
+            )
+
+        candidates: list[str] = []
+        if href := self._hrefs.get((calendar_id, uid)):
+            candidates.append(href)
+        candidates.append(urljoin(calendar_id.rstrip("/") + "/", f"{quote(uid, safe='@')}.ics"))
+        for href in candidates:
+            try:
+                obj = calendar.event_by_url(href)
+                if has_uid(obj):
+                    return obj
+            except caldav_error.AuthorizationError:
+                raise
+            except (caldav_error.DAVError, ValueError):
+                _LOGGER.debug("Lookup of %s by URL %s failed", uid, href)
+
         try:
-            return self._calendar(calendar_id).event_by_uid(uid)
-        except caldav_error.NotFoundError as err:
-            raise ValueError(f"Event {uid} not found") from err
+            return calendar.event_by_uid(uid)
+        except caldav_error.AuthorizationError:
+            raise
+        except caldav_error.DAVError:
+            _LOGGER.debug("Server rejected UID search for %s, scanning calendar", uid)
+
+        for obj in calendar.events():
+            if has_uid(obj):
+                if obj.url is not None:
+                    self._hrefs[(calendar_id, uid)] = str(obj.url)
+                return obj
+        raise ValueError(f"Event {uid} not found")
 
     def _update(
         self,
