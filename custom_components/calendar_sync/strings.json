@@ -1,0 +1,160 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add calendar account",
+        "menu_options": {
+          "caldav": "Apple iCloud / CalDAV",
+          "google": "Google Calendar"
+        }
+      },
+      "caldav": {
+        "title": "Apple iCloud / CalDAV",
+        "description": "For iCloud keep the URL, enter your Apple ID and an app-specific password from account.apple.com.",
+        "data": {
+          "url": "URL",
+          "username": "Username / Apple ID",
+          "password": "Password",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      },
+      "calendars": {
+        "title": "Choose calendars",
+        "description": "Each selected calendar becomes an editable calendar entity.",
+        "data": {
+          "calendars": "Calendars"
+        }
+      },
+      "pick_implementation": {
+        "title": "Pick authentication method"
+      },
+      "reauth_confirm": {
+        "title": "Sign in to Google again",
+        "description": "The Google sign-in has expired."
+      },
+      "reauth_caldav": {
+        "title": "Update password",
+        "description": "Enter a new password for {username}.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect.",
+      "invalid_auth": "Username or password is wrong. For iCloud use an app-specific password.",
+      "no_calendars": "No calendars found for this account."
+    },
+    "abort": {
+      "already_configured": "This account is already set up.",
+      "cannot_connect": "Could not connect.",
+      "wrong_account": "You signed in with a different Google account.",
+      "reauth_successful": "Signed in again.",
+      "missing_credentials": "Add Google OAuth credentials under Application Credentials first.",
+      "missing_configuration": "Google credentials are missing.",
+      "authorize_url_timeout": "Timeout generating authorize URL.",
+      "no_url_available": "No Home Assistant URL available.",
+      "oauth_error": "Received invalid token data.",
+      "oauth_timeout": "Timeout resolving OAuth token.",
+      "oauth_unauthorized": "OAuth authorization error.",
+      "oauth_failed": "Error while obtaining access token.",
+      "oauth_implementation_unavailable": "OAuth implementation unavailable.",
+      "user_rejected_authorize": "Account linking rejected: {error}"
+    },
+    "create_entry": {
+      "default": "Successfully authenticated"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Choose calendars",
+        "data": {
+          "calendars": "Calendars"
+        }
+      }
+    },
+    "abort": {
+      "cannot_connect": "Could not connect."
+    }
+  },
+  "application_credentials": {
+    "description": "Create an OAuth client of type Web application at {console_url}, enable the Google Calendar API and add {redirect_url} as redirect URI."
+  },
+  "services": {
+    "update_event": {
+      "name": "Update event",
+      "description": "Changes an event in Google or iCloud. Fields left out keep their value.",
+      "fields": {
+        "uid": {
+          "name": "UID",
+          "description": "Event UID (from calendar_sync.list_events)."
+        },
+        "recurrence_id": {
+          "name": "Recurrence ID",
+          "description": "Identifies one occurrence of a recurring event."
+        },
+        "recurrence_range": {
+          "name": "Range",
+          "description": "Empty = only this occurrence, THISANDFUTURE = this and all following."
+        },
+        "summary": {
+          "name": "Title",
+          "description": "New title."
+        },
+        "description": {
+          "name": "Description",
+          "description": "New description."
+        },
+        "location": {
+          "name": "Location",
+          "description": "New location."
+        },
+        "start": {
+          "name": "Start",
+          "description": "New start (date or date and time)."
+        },
+        "end": {
+          "name": "End",
+          "description": "New end."
+        },
+        "rrule": {
+          "name": "RRULE",
+          "description": "Recurrence rule, e.g. FREQ=WEEKLY;COUNT=5."
+        }
+      }
+    },
+    "delete_event": {
+      "name": "Delete event",
+      "description": "Deletes an event in Google or iCloud.",
+      "fields": {
+        "uid": {
+          "name": "UID",
+          "description": "Event UID (from calendar_sync.list_events)."
+        },
+        "recurrence_id": {
+          "name": "Recurrence ID",
+          "description": "Identifies one occurrence of a recurring event."
+        },
+        "recurrence_range": {
+          "name": "Range",
+          "description": "Empty = only this occurrence, THISANDFUTURE = this and all following."
+        }
+      }
+    },
+    "list_events": {
+      "name": "List events",
+      "description": "Returns events with their UID so they can be edited or deleted.",
+      "fields": {
+        "start": {
+          "name": "Start",
+          "description": "Default: now."
+        },
+        "end": {
+          "name": "End",
+          "description": "Default: start + 7 days."
+        }
+      }
+    }
+  }
+}

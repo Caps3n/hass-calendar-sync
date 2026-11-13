@@ -1,0 +1,160 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Kalenderkonto hinzufügen",
+        "menu_options": {
+          "caldav": "Apple iCloud / CalDAV",
+          "google": "Google Calendar"
+        }
+      },
+      "caldav": {
+        "title": "Apple iCloud / CalDAV",
+        "description": "Für iCloud die URL so lassen, Apple-ID und ein app-spezifisches Passwort von account.apple.com eintragen.",
+        "data": {
+          "url": "URL",
+          "username": "Benutzername / Apple-ID",
+          "password": "Passwort",
+          "verify_ssl": "SSL-Zertifikat prüfen"
+        }
+      },
+      "calendars": {
+        "title": "Kalender auswählen",
+        "description": "Jeder ausgewählte Kalender wird eine bearbeitbare Kalender-Entität.",
+        "data": {
+          "calendars": "Kalender"
+        }
+      },
+      "pick_implementation": {
+        "title": "Anmeldemethode wählen"
+      },
+      "reauth_confirm": {
+        "title": "Erneut bei Google anmelden",
+        "description": "Die Google-Anmeldung ist abgelaufen."
+      },
+      "reauth_caldav": {
+        "title": "Passwort aktualisieren",
+        "description": "Neues Passwort für {username} eingeben.",
+        "data": {
+          "password": "Passwort"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen.",
+      "invalid_auth": "Benutzername oder Passwort falsch. Für iCloud ein app-spezifisches Passwort verwenden.",
+      "no_calendars": "Für dieses Konto wurden keine Kalender gefunden."
+    },
+    "abort": {
+      "already_configured": "Dieses Konto ist bereits eingerichtet.",
+      "cannot_connect": "Verbindung fehlgeschlagen.",
+      "wrong_account": "Du hast dich mit einem anderen Google-Konto angemeldet.",
+      "reauth_successful": "Erneut angemeldet.",
+      "missing_credentials": "Zuerst Google-OAuth-Zugangsdaten unter Anwendungsanmeldedaten hinzufügen.",
+      "missing_configuration": "Google-Zugangsdaten fehlen.",
+      "authorize_url_timeout": "Zeitüberschreitung beim Erzeugen der Anmelde-URL.",
+      "no_url_available": "Keine Home-Assistant-URL verfügbar.",
+      "oauth_error": "Ungültige Token-Daten erhalten.",
+      "oauth_timeout": "Zeitüberschreitung beim Abrufen des OAuth-Tokens.",
+      "oauth_unauthorized": "OAuth-Autorisierungsfehler.",
+      "oauth_failed": "Fehler beim Abrufen des Zugriffstokens.",
+      "oauth_implementation_unavailable": "OAuth-Implementierung nicht verfügbar.",
+      "user_rejected_authorize": "Verknüpfung abgelehnt: {error}"
+    },
+    "create_entry": {
+      "default": "Erfolgreich angemeldet"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Kalender auswählen",
+        "data": {
+          "calendars": "Kalender"
+        }
+      }
+    },
+    "abort": {
+      "cannot_connect": "Verbindung fehlgeschlagen."
+    }
+  },
+  "application_credentials": {
+    "description": "Unter {console_url} einen OAuth-Client vom Typ Webanwendung anlegen, die Google Calendar API aktivieren und {redirect_url} als Weiterleitungs-URI eintragen."
+  },
+  "services": {
+    "update_event": {
+      "name": "Termin bearbeiten",
+      "description": "Ändert einen Termin in Google oder iCloud. Weggelassene Felder bleiben unverändert.",
+      "fields": {
+        "uid": {
+          "name": "UID",
+          "description": "UID des Termins (aus calendar_sync.list_events)."
+        },
+        "recurrence_id": {
+          "name": "Wiederholungs-ID",
+          "description": "Kennzeichnet ein einzelnes Vorkommen einer Serie."
+        },
+        "recurrence_range": {
+          "name": "Bereich",
+          "description": "Leer = nur dieses Vorkommen, THISANDFUTURE = dieses und alle folgenden."
+        },
+        "summary": {
+          "name": "Titel",
+          "description": "Neuer Titel."
+        },
+        "description": {
+          "name": "Beschreibung",
+          "description": "Neue Beschreibung."
+        },
+        "location": {
+          "name": "Ort",
+          "description": "Neuer Ort."
+        },
+        "start": {
+          "name": "Start",
+          "description": "Neuer Beginn (Datum oder Datum mit Uhrzeit)."
+        },
+        "end": {
+          "name": "Ende",
+          "description": "Neues Ende."
+        },
+        "rrule": {
+          "name": "RRULE",
+          "description": "Wiederholungsregel, z. B. FREQ=WEEKLY;COUNT=5."
+        }
+      }
+    },
+    "delete_event": {
+      "name": "Termin löschen",
+      "description": "Löscht einen Termin in Google oder iCloud.",
+      "fields": {
+        "uid": {
+          "name": "UID",
+          "description": "UID des Termins (aus calendar_sync.list_events)."
+        },
+        "recurrence_id": {
+          "name": "Wiederholungs-ID",
+          "description": "Kennzeichnet ein einzelnes Vorkommen einer Serie."
+        },
+        "recurrence_range": {
+          "name": "Bereich",
+          "description": "Leer = nur dieses Vorkommen, THISANDFUTURE = dieses und alle folgenden."
+        }
+      }
+    },
+    "list_events": {
+      "name": "Termine auflisten",
+      "description": "Gibt Termine mit UID zurück, damit sie bearbeitet oder gelöscht werden können.",
+      "fields": {
+        "start": {
+          "name": "Start",
+          "description": "Standard: jetzt."
+        },
+        "end": {
+          "name": "Ende",
+          "description": "Standard: Beginn + 7 Tage."
+        }
+      }
+    }
+  }
+}

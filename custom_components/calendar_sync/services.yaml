@@ -1,0 +1,69 @@
+update_event:
+  target:
+    entity:
+      integration: calendar_sync
+      domain: calendar
+  fields:
+    uid:
+      required: true
+      selector:
+        text:
+    recurrence_id:
+      selector:
+        text:
+    recurrence_range:
+      selector:
+        select:
+          options:
+            - ""
+            - "THISANDFUTURE"
+    summary:
+      selector:
+        text:
+    description:
+      selector:
+        text:
+          multiline: true
+    location:
+      selector:
+        text:
+    start:
+      selector:
+        datetime:
+    end:
+      selector:
+        datetime:
+    rrule:
+      selector:
+        text:
+delete_event:
+  target:
+    entity:
+      integration: calendar_sync
+      domain: calendar
+  fields:
+    uid:
+      required: true
+      selector:
+        text:
+    recurrence_id:
+      selector:
+        text:
+    recurrence_range:
+      selector:
+        select:
+          options:
+            - ""
+            - "THISANDFUTURE"
+list_events:
+  target:
+    entity:
+      integration: calendar_sync
+      domain: calendar
+  fields:
+    start:
+      selector:
+        datetime:
+    end:
+      selector:
+        datetime:
