@@ -1,99 +1,138 @@
-# Calendar Sync (Google & iCloud) für Home Assistant
+# Calendar Sync (Google & iCloud) for Home Assistant
 
-> **Beta:** Diese Version ist neu und wurde noch nicht mit echten Konten breit getestet. Fehler bitte als [Issue](https://github.com/Caps3n/hass-calendar-sync/issues) melden.
+[![Version](https://img.shields.io/github/v/release/Caps3n/hass-calendar-sync?label=version&color=blue)](https://github.com/Caps3n/hass-calendar-sync/releases)
+[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![HA Version](https://img.shields.io/badge/Home%20Assistant-2025.2%2B-blue.svg)](https://www.home-assistant.io/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Validate](https://github.com/Caps3n/hass-calendar-sync/actions/workflows/validate.yml/badge.svg)](https://github.com/Caps3n/hass-calendar-sync/actions/workflows/validate.yml)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-caps3n-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/caps3n)
 
-Kalender-Entitäten, in denen du Termine direkt in Home Assistant **erstellen, bearbeiten und löschen** kannst. Jede Änderung wird sofort in den Google Kalender bzw. den Apple-iCloud-Kalender geschrieben.
+🇩🇪 [Deutsche Anleitung](README_DE.md)
 
-- Apple iCloud (und jeder andere CalDAV-Server, z. B. Nextcloud)
-- Google Kalender (OAuth)
-- Wiederkehrende Termine: einzelnes Vorkommen oder „dieses und alle folgenden“ bearbeiten/löschen
-- Bearbeiten und Löschen direkt im Kalender-Dashboard von HA
-- Zusätzliche Dienste für Automationen: `calendar_sync.list_events`, `calendar_sync.update_event`, `calendar_sync.delete_event`
-- Schreibgeschützte Kalender (z. B. Feiertage) werden nur angezeigt
+Calendar entities you can **create, edit and delete events** in, right inside Home Assistant. Every change is written straight to your Google Calendar or Apple iCloud calendar.
 
-Voraussetzung: Home Assistant 2025.2 oder neuer.
+<p>
+  <img src="images/event_details.png" alt="Event details with edit and delete" width="420">
+</p>
 
-## Installation
+## ✨ Features
 
-**Über HACS (benutzerdefiniertes Repository)**
-1. HACS → oben rechts ⋮ → *Benutzerdefinierte Repositories* → URL dieses Repos, Typ *Integration*.
-2. „Calendar Sync (Google & iCloud)“ öffnen. Für die Beta: ⋮ → *Neu herunterladen* → *Beta-Versionen anzeigen* aktivieren und die neueste Beta wählen.
-3. Home Assistant neu starten.
+- 🍏 **Apple iCloud** (and any other CalDAV server, e.g. Nextcloud)
+- 📅 **Google Calendar** (OAuth)
+- ✏️ Create, edit and delete events from the Home Assistant calendar dashboard
+- 🔁 Recurring events: change or delete a single occurrence or "this and all following"
+- 🤖 Services for automations: `calendar_sync.list_events`, `calendar_sync.update_event`, `calendar_sync.delete_event`
+- 🔒 Read-only calendars (e.g. holidays) are shown but not editable
+- 🌍 English and German
 
-**Manuell**
-Den Ordner `custom_components/calendar_sync` nach `/config/custom_components/calendar_sync` kopieren und Home Assistant neu starten.
+| Add event | Edit event | Your calendars |
+| --- | --- | --- |
+| <img src="images/add_event.png" alt="Add event" width="260"> | <img src="images/edit_event.png" alt="Edit event" width="260"> | <img src="images/calendars.png" alt="iCloud calendars as entities" width="200"> |
 
-## Apple iCloud einrichten
+**Requirements:** Home Assistant **2025.2** or newer.
 
-1. Auf [account.apple.com](https://account.apple.com) → *Anmeldung und Sicherheit* → *App-spezifische Passwörter* ein neues Passwort erzeugen (z. B. „Home Assistant“).
-2. In HA: *Einstellungen → Geräte & Dienste → Integration hinzufügen → Calendar Sync* → **Apple iCloud / CalDAV**.
-3. URL `https://caldav.icloud.com/` stehen lassen, Apple-ID als Benutzername, das app-spezifische Passwort eintragen.
-4. Kalender auswählen. Fertig.
+## 📦 Installation
 
-## Google Kalender einrichten
+### HACS (recommended)
 
-Google verlangt einen eigenen OAuth-Client (einmalig, kostenlos):
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Caps3n&repository=hass-calendar-sync&category=integration)
 
-1. In der [Google Cloud Console](https://console.cloud.google.com/) ein Projekt anlegen.
-2. *APIs & Dienste → Bibliothek* → **Google Calendar API** aktivieren.
-3. *OAuth-Zustimmungsbildschirm*: Typ *Extern*, deine Google-Adresse als Testnutzer eintragen. Danach auf **„In Produktion“** stellen, sonst läuft die Anmeldung nach 7 Tagen ab (eine Prüfung durch Google ist für den Eigengebrauch nicht nötig, du klickst die Warnung beim Anmelden einfach weg).
-4. *Anmeldedaten → OAuth-Client-ID erstellen* → Typ **Webanwendung**, als Weiterleitungs-URI `https://my.home-assistant.io/redirect/oauth` eintragen.
-5. In HA: *Integration hinzufügen → Calendar Sync* → **Google Calendar**, Client-ID und Client-Secret eingeben, mit Google anmelden, Kalender auswählen.
+1. HACS → ⋮ (top right) → *Custom repositories* → add `https://github.com/Caps3n/hass-calendar-sync` as type *Integration*.
+2. Install **Calendar Sync (Google & iCloud)**.
+3. Restart Home Assistant.
 
-Tipp: Wenn du vorher die offiziellen Integrationen *Google Calendar* oder *CalDAV* für dieselben Kalender genutzt hast, entferne sie, damit du keine doppelten Entitäten hast.
+### Manual
 
-## Benutzung
+Copy `custom_components/calendar_sync` to `/config/custom_components/calendar_sync` and restart Home Assistant.
 
-**Im Dashboard:** *Kalender* in der Seitenleiste öffnen, auf einen Termin klicken → *Bearbeiten* oder *Löschen*. Neuer Termin über *Termin hinzufügen*.
+## ⚙️ Setup
 
-**In Automationen:**
+[![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=calendar_sync)
+
+### Apple iCloud
+
+1. At [account.apple.com](https://account.apple.com) → *Sign-In and Security* → *App-Specific Passwords*, create a new password (e.g. "Home Assistant").
+2. In Home Assistant: *Settings → Devices & services → Add integration → Calendar Sync* → **Apple iCloud / CalDAV**.
+3. Keep the URL `https://caldav.icloud.com/`, enter your Apple ID and the app-specific password.
+4. Pick your calendars. Done.
+
+### Google Calendar
+
+Google requires your own OAuth client (one-time, free):
+
+1. Create a project in the [Google Cloud Console](https://console.cloud.google.com/).
+2. *APIs & Services → Library* → enable the **Google Calendar API**.
+3. *OAuth consent screen*: type *External*, add your Google address as a test user. Then set it to **"In production"**, otherwise the sign-in expires after 7 days. Google review is not needed for personal use; just click through the warning when signing in.
+4. *Credentials → Create OAuth client ID* → type **Web application**, redirect URI `https://my.home-assistant.io/redirect/oauth`.
+5. In Home Assistant: *Add integration → Calendar Sync* → **Google Calendar**, enter client ID and secret, sign in with Google, pick your calendars.
+
+> Tip: if you used the official *Google Calendar* or *CalDAV* integrations for the same calendars before, remove them to avoid duplicate entities.
+
+## 🚀 Usage
+
+**Dashboard:** open *Calendar* in the sidebar, click an event → *Edit* or *Delete*. New events via *Add event*.
+
+**Automations:**
 
 ```yaml
-# Termin anlegen (Standard-Dienst von HA)
+# Create an event (built-in Home Assistant action)
 action: calendar.create_event
 target:
-  entity_id: calendar.icloud_privat
+  entity_id: calendar.icloud_private
 data:
-  summary: Müll rausbringen
+  summary: Take out the trash
   start_date_time: "2026-11-20 19:00:00"
   end_date_time: "2026-11-20 19:15:00"
 
-# Termine mit UID abfragen
+# List events including their UID
 action: calendar_sync.list_events
 target:
-  entity_id: calendar.icloud_privat
+  entity_id: calendar.icloud_private
 data:
   start: "2026-11-20 00:00:00"
   end: "2026-11-27 00:00:00"
-response_variable: termine
+response_variable: events
 
-# Termin ändern (nicht angegebene Felder bleiben gleich)
+# Change an event (fields you leave out stay the same)
 action: calendar_sync.update_event
 target:
-  entity_id: calendar.icloud_privat
+  entity_id: calendar.icloud_private
 data:
-  uid: "{{ termine['calendar.icloud_privat'].events[0].uid }}"
-  summary: Müll rausbringen (Gelbe Tonne)
+  uid: "{{ events['calendar.icloud_private'].events[0].uid }}"
+  summary: Take out the trash (yellow bin)
 
-# Termin löschen
+# Delete an event
 action: calendar_sync.delete_event
 target:
-  entity_id: calendar.icloud_privat
+  entity_id: calendar.icloud_private
 data:
-  uid: "{{ termine['calendar.icloud_privat'].events[0].uid }}"
+  uid: "{{ events['calendar.icloud_private'].events[0].uid }}"
 ```
 
-Bei wiederkehrenden Terminen zusätzlich `recurrence_id` aus `list_events` mitgeben. Ohne `recurrence_range` betrifft die Änderung nur dieses Vorkommen, mit `recurrence_range: THISANDFUTURE` dieses und alle folgenden.
+For recurring events also pass `recurrence_id` from `list_events`. Without `recurrence_range` only that occurrence changes; with `recurrence_range: THISANDFUTURE` that occurrence and all following ones.
 
-## Gut zu wissen
+## ℹ️ Good to know
 
-- Termine werden alle 5 Minuten abgefragt, nach jeder Änderung in HA sofort.
-- Neue Termine mit Uhrzeit werden in UTC gespeichert und von allen Kalender-Apps korrekt in deiner Zeitzone angezeigt.
-- Google und Apple werden **nicht** untereinander abgeglichen: Jeder Termin bleibt in dem Kalender, in dem er liegt.
+- Events are refreshed every 5 minutes, and right after every change made in Home Assistant.
+- New timed events are stored in UTC and shown in your time zone by every calendar app.
+- Google and Apple are **not** synced with each other: each event stays in the calendar it belongs to.
+- Moving an event to a different calendar is not supported yet.
 
-## Entwicklung
+## 🛠️ Development
 
 ```bash
 pip install pytest-homeassistant-custom-component "caldav==2.1.0" "icalendar==6.3.1"
 pytest
 ```
+
+## 👥 Credits
+
+Developed by [@Caps3n](https://github.com/Caps3n) together with [Claude](https://claude.ai) (Anthropic).
+
+If this integration is useful to you, I'd appreciate a coffee:
+
+<a href="https://www.buymeacoffee.com/caps3n" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50"></a>
+
+## 📄 License
+
+[MIT](LICENSE)
