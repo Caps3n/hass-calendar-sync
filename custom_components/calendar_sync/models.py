@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.util import dt as dt_util
@@ -63,6 +64,38 @@ class EventData:
             location=event.get("location") or None,
             rrule=event.get("rrule") or None,
         )
+
+
+def calendar_key(calendar_id: str) -> str:
+    """Compare calendar ids without host, port or trailing slash.
+
+    iCloud serves a calendar under caldav.icloud.com and the account's
+    partition host (pNN-caldav.icloud.com), and caldav versions differ in which
+    one, and whether with ":443", they report. Google ids are not URLs and are
+    returned unchanged.
+    """
+    parts = urlsplit(calendar_id)
+    if parts.scheme in ("http", "https") and parts.netloc:
+        return unquote(parts.path).rstrip("/") or "/"
+    return calendar_id
+
+
+def match_selected(
+    available: list[CalendarInfo], selected: list[str]
+) -> list[CalendarInfo]:
+    """Pick the selected calendars, keeping the ids stored in the config entry.
+
+    The entity unique IDs are built from the stored ids, so they must not
+    change when the server reports a calendar under another host.
+    """
+    if not selected:
+        return available
+    stored = {calendar_key(cal_id): cal_id for cal_id in selected}
+    result = []
+    for cal in available:
+        if (cal_id := stored.get(calendar_key(cal.id))) is not None:
+            result.append(CalendarInfo(id=cal_id, name=cal.name, writable=cal.writable))
+    return result
 
 
 class CalendarProvider(ABC):

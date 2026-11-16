@@ -9,7 +9,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from custom_components.calendar_sync.caldav_provider import CalDavProvider
-from custom_components.calendar_sync.models import EventData
+from custom_components.calendar_sync.models import (
+    CalendarInfo,
+    EventData,
+    ProviderError,
+    calendar_key,
+    match_selected,
+)
 
 from .fake_caldav import FakeCalendar
 
@@ -283,3 +289,71 @@ async def test_created_event_editable_without_uid_search(hass) -> None:
     await provider.async_delete_event(CAL, uid)
     assert not fake.uids()
     assert fake.uid_searches == 0
+
+
+class _BrokenObject:
+    url = "https://caldav.example.com/cal/home/broken.ics"
+
+    @property
+    def icalendar_instance(self):
+        raise KeyError("broken data")
+
+
+async def test_broken_object_does_not_hide_other_events(setup) -> None:
+    provider, fake = setup
+    good = fake.events()
+    fake.search = lambda **_kw: [*good, _BrokenObject()]
+    summaries = {e.summary for e in await _events(provider)}
+    assert summaries == {"Standup", "Dentist"}
+
+
+async def test_unexpected_error_becomes_provider_error(setup) -> None:
+    provider, fake = setup
+
+    def boom(**_kw):
+        raise RuntimeError("connection reset by niquests")
+
+    fake.search = boom
+    with pytest.raises(ProviderError, match="RuntimeError"):
+        await _events(provider)
+
+
+async def test_event_without_end_and_odd_rrule_are_shown(setup) -> None:
+    provider, fake = setup
+    fake.add(
+        """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:test
+BEGIN:VEVENT
+UID:no-end
+DTSTART:20261115T080000Z
+SUMMARY:Erinnerung
+END:VEVENT
+END:VCALENDAR
+"""
+    )
+    events = {e.summary: e for e in await _events(provider)}
+    assert events["Erinnerung"].start == events["Erinnerung"].end
+
+
+async def test_stored_calendar_id_on_other_host_resolves(hass: HomeAssistant) -> None:
+    """iCloud reports calendars on the partition host or the generic one."""
+    await hass.config.async_set_time_zone("Europe/Berlin")
+    fake = FakeCalendar()
+    fake.add(SINGLE)
+    provider = CalDavProvider(hass, "https://caldav.icloud.com/", "u", "p")
+    provider._calendars["https://p53-caldav.icloud.com/123/calendars/home/"] = fake
+    stored = "https://caldav.icloud.com:443/123/calendars/home"
+    events = await provider.async_get_events(stored, *WINDOW)
+    assert [e.uid for e in events] == ["single-1"]
+
+
+def test_match_selected_keeps_stored_ids() -> None:
+    available = [
+        CalendarInfo("https://p53-caldav.icloud.com/123/calendars/home/", "Marcel"),
+        CalendarInfo("https://p53-caldav.icloud.com/123/calendars/work/", "Arbeit"),
+    ]
+    stored = ["https://caldav.icloud.com:443/123/calendars/home/"]
+    assert match_selected(available, stored) == [CalendarInfo(stored[0], "Marcel")]
+    assert match_selected(available, []) == available
+    assert calendar_key("me@gmail.com") == "me@gmail.com"

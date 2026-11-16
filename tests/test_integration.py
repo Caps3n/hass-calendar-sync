@@ -225,3 +225,33 @@ async def test_services_update_partial_and_delete(hass: HomeAssistant, entry, fa
 
 async def test_unload(hass: HomeAssistant, entry) -> None:
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_entity_kept_when_server_reports_other_host(
+    hass: HomeAssistant, fake, freezer: FrozenDateTimeFactory
+) -> None:
+    """Calendars stored as caldav.icloud.com stay the same entity on pNN hosts."""
+    await hass.config.async_set_time_zone("Europe/Berlin")
+    freezer.move_to("2026-11-09T12:00:00+00:00")
+    stored = "https://caldav.example.com:443/cal/home"
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="iCloud (me@example.com)",
+        data={
+            "provider": "caldav",
+            "url": "https://caldav.icloud.com/",
+            "username": "me@example.com",
+            "password": "app-pass",
+            "verify_ssl": True,
+            "calendars": [stored],
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    from homeassistant.helpers import entity_registry as er
+
+    reg = er.async_get(hass).async_get(ENTITY)
+    assert reg is not None
+    assert reg.unique_id == f"{entry.entry_id}_{stored}"
+    assert hass.states.get(ENTITY).state != "unavailable"

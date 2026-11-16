@@ -38,7 +38,7 @@ from .const import (
     PROVIDER_CALDAV,
     PROVIDER_GOOGLE,
 )
-from .models import CalendarInfo, ProviderAuthError, ProviderError
+from .models import CalendarInfo, ProviderAuthError, ProviderError, calendar_key
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -268,6 +268,17 @@ class CalendarSyncOptionsFlow(OptionsFlow):
         except (ProviderError, AttributeError):
             return self.async_abort(reason="cannot_connect")
         current = entry.options.get(CONF_CALENDARS, entry.data.get(CONF_CALENDARS, []))
+        # Offer already selected calendars under their stored ids, even if the
+        # server now reports them under another host.
+        stored = {calendar_key(cal_id): cal_id for cal_id in current}
+        calendars = [
+            CalendarInfo(
+                id=stored.get(calendar_key(cal.id), cal.id),
+                name=cal.name,
+                writable=cal.writable,
+            )
+            for cal in calendars
+        ]
         return self.async_show_form(
             step_id="init", data_schema=_calendar_schema(calendars, current)
         )

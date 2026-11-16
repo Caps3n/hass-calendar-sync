@@ -21,7 +21,13 @@ from .caldav_provider import CalDavProvider
 from .const import CONF_CALENDARS, CONF_PROVIDER, PROVIDER_GOOGLE
 from .coordinator import CalendarSyncCoordinator
 from .google_provider import GoogleProvider
-from .models import CalendarInfo, CalendarProvider, ProviderAuthError, ProviderError
+from .models import (
+    CalendarInfo,
+    CalendarProvider,
+    ProviderAuthError,
+    ProviderError,
+    match_selected,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,8 +77,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: CalendarSyncConfigEntry)
     except ProviderError as err:
         raise ConfigEntryNotReady(str(err)) from err
 
-    selected = set(entry.options.get(CONF_CALENDARS, entry.data.get(CONF_CALENDARS, [])))
-    calendars = [c for c in available if not selected or c.id in selected]
+    selected = list(entry.options.get(CONF_CALENDARS, entry.data.get(CONF_CALENDARS, [])))
+    calendars = match_selected(available, selected)
+    if selected and len(calendars) < len(selected):
+        _LOGGER.warning(
+            "%s: %d of %d selected calendars were not found on the server. "
+            "Available: %s, selected: %s",
+            entry.title,
+            len(selected) - len(calendars),
+            len(selected),
+            [c.id for c in available],
+            selected,
+        )
 
     coordinator = CalendarSyncCoordinator(hass, entry, provider, calendars)
     await coordinator.async_config_entry_first_refresh()
