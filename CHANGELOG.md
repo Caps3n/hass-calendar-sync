@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.1 – 2026-11-16
+
+- Fix: iCloud calendars could show "could not load events" for every calendar.
+  - Selected calendars are now matched by their path, so a calendar that iCloud reports under another host (caldav.icloud.com vs. pNN-caldav.icloud.com, with or without :443) keeps its entity.
+  - A single event the integration cannot read is skipped and logged instead of failing the whole calendar.
+  - One failing calendar no longer makes the other calendars of the account unavailable.
+  - Unexpected errors (e.g. from newer caldav versions using niquests) are reported with their cause instead of as an unknown error.
+  - CalDAV requests now time out after 30 seconds. Before, an iCloud server that did not answer blocked setup until Home Assistant aborted its startup ("Bootstrap stage 2 timeout"); now setup fails and is retried later. Setup itself waits at most 45 seconds for the server.
+  - Requests of one account are sent one after the other, since the CalDAV connection is shared and not thread safe.
+
 ## 1.0.0 – 2026-11-13
 
 First stable release.

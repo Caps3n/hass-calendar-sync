@@ -40,13 +40,21 @@ class CalendarSyncCoordinator(DataUpdateCoordinator[dict[str, list[CalendarEvent
     async def _async_update_data(self) -> dict[str, list[CalendarEvent]]:
         now = dt_util.now()
         start, end = now - LOOKBACK, now + LOOKAHEAD
+        previous = self.data or {}
         data: dict[str, list[CalendarEvent]] = {}
-        try:
-            for calendar in self.calendars:
+        errors: list[str] = []
+        for calendar in self.calendars:
+            try:
                 events = await self.provider.async_get_events(calendar.id, start, end)
-                data[calendar.id] = sorted(events, key=lambda e: e.start_datetime_local)
-        except ProviderAuthError as err:
-            raise ConfigEntryAuthFailed(str(err)) from err
-        except ProviderError as err:
-            raise UpdateFailed(str(err)) from err
+            except ProviderAuthError as err:
+                raise ConfigEntryAuthFailed(str(err)) from err
+            except ProviderError as err:
+                # One failing calendar must not take the others down with it.
+                _LOGGER.warning("Could not load events of %s: %s", calendar.name, err)
+                errors.append(f"{calendar.name}: {err}")
+                data[calendar.id] = previous.get(calendar.id, [])
+                continue
+            data[calendar.id] = sorted(events, key=lambda e: e.start_datetime_local)
+        if self.calendars and len(errors) == len(self.calendars):
+            raise UpdateFailed("; ".join(errors))
         return data

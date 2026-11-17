@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import date, datetime, timezone
 import logging
+import threading
 from typing import Any, TypeVar
 from urllib.parse import quote, urljoin
 import uuid
@@ -26,6 +27,7 @@ from .models import (
     EventData,
     ProviderAuthError,
     ProviderError,
+    calendar_key,
     format_recurrence_id,
     normalize_event_times,
     parse_recurrence_id,
@@ -38,6 +40,8 @@ _LOGGER = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 PRODID = "-//Calendar Sync for Home Assistant//EN"
+# Seconds a single CalDAV request may take before it is given up.
+REQUEST_TIMEOUT = 30
 
 
 def _to_ical_value(value: date | datetime) -> date | datetime:
@@ -177,21 +181,48 @@ class CalDavProvider(CalendarProvider):
         verify_ssl: bool = True,
     ) -> None:
         self._hass = hass
+        # Without a timeout a server that does not answer blocks the request
+        # forever: setup then stalls Home Assistant's startup ("Bootstrap stage 2
+        # timeout") instead of failing and being retried later.
         self._client = caldav.DAVClient(
-            url=url, username=username, password=password, ssl_verify_cert=verify_ssl
+            url=url,
+            username=username,
+            password=password,
+            ssl_verify_cert=verify_ssl,
+            timeout=REQUEST_TIMEOUT,
         )
         self._calendars: dict[str, caldav.Calendar] = {}
         # (calendar id, UID) -> object URL, learned while reading. iCloud rejects
         # REPORT queries that filter by UID (412), so edits load objects by URL.
         self._hrefs: dict[tuple[str, str], str] = {}
+        # The dashboard asks for all calendars at once. One DAVClient (and its
+        # HTTP session) is shared by all of them and is not thread safe, so
+        # requests are made one after the other.
+        self._lock = threading.Lock()
+
+    def _locked(self, func: Callable[..., _T], *args: Any) -> _T:
+        with self._lock:
+            return func(*args)
 
     async def _run(self, func: Callable[..., _T], *args: Any) -> _T:
         try:
-            return await self._hass.async_add_executor_job(func, *args)
+            return await self._hass.async_add_executor_job(self._locked, func, *args)
         except caldav_error.AuthorizationError as err:
             raise ProviderAuthError(str(err)) from err
+        except ProviderError:
+            raise
         except (caldav_error.DAVError, requests.RequestException, ValueError) as err:
+            _LOGGER.debug("CalDAV request failed", exc_info=True)
             raise ProviderError(f"CalDAV request failed: {err}") from err
+        except Exception as err:
+            # caldav 2.x/3.x raise transport errors of other HTTP libraries
+            # (niquests, httpx) and calendar data can trip icalendar or
+            # recurring-ical-events. Never let those escape as a bare exception:
+            # Home Assistant would only report an unknown error.
+            _LOGGER.warning("CalDAV request failed unexpectedly", exc_info=True)
+            raise ProviderError(
+                f"CalDAV request failed: {type(err).__name__}: {err}"
+            ) from err
 
     # -- discovery ---------------------------------------------------------
 
@@ -215,7 +246,12 @@ class CalDavProvider(CalendarProvider):
 
     def _calendar(self, calendar_id: str) -> caldav.Calendar:
         if calendar_id not in self._calendars:
-            self._calendars[calendar_id] = self._client.calendar(url=calendar_id)
+            key = calendar_key(calendar_id)
+            found = next(
+                (cal for cal_id, cal in self._calendars.items() if calendar_key(cal_id) == key),
+                None,
+            )
+            self._calendars[calendar_id] = found or self._client.calendar(url=calendar_id)
         return self._calendars[calendar_id]
 
     # -- reading -----------------------------------------------------------
@@ -227,21 +263,43 @@ class CalDavProvider(CalendarProvider):
         objects = calendar.search(start=start, end=end, event=True, expand=False)
         events: list[CalendarEvent] = []
         for obj in objects:
-            cal = obj.icalendar_instance
-            if getattr(obj, "url", None) is not None:
-                for comp in cal.walk("VEVENT"):
-                    self._hrefs[(calendar_id, str(comp.get("UID")))] = str(obj.url)
-            rrules = {
-                str(c.get("UID")): _rrule_str(c)
-                for c in cal.walk("VEVENT")
-                if c.get("RECURRENCE-ID") is None
-            }
-            for vevent in recurring_ical_events.of(cal).between(start, end):
-                if str(vevent.get("STATUS", "")).upper() == "CANCELLED":
-                    continue
-                event = self._to_ha_event(vevent, rrules)
-                if event is not None:
-                    events.append(event)
+            try:
+                events.extend(self._object_events(calendar_id, obj, start, end))
+            except Exception:  # noqa: BLE001 - one broken object must not hide the rest
+                _LOGGER.warning(
+                    "Skipping calendar object %s that could not be read",
+                    getattr(obj, "url", None),
+                    exc_info=True,
+                )
+        _LOGGER.debug(
+            "Loaded %d events from %s (%d objects) between %s and %s",
+            len(events),
+            calendar_id,
+            len(objects),
+            start,
+            end,
+        )
+        return events
+
+    def _object_events(
+        self, calendar_id: str, obj: Any, start: datetime, end: datetime
+    ) -> list[CalendarEvent]:
+        cal = obj.icalendar_instance
+        if getattr(obj, "url", None) is not None:
+            for comp in cal.walk("VEVENT"):
+                self._hrefs[(calendar_id, str(comp.get("UID")))] = str(obj.url)
+        rrules = {
+            str(c.get("UID")): _rrule_str(c)
+            for c in cal.walk("VEVENT")
+            if c.get("RECURRENCE-ID") is None
+        }
+        events: list[CalendarEvent] = []
+        for vevent in recurring_ical_events.of(cal).between(start, end):
+            if str(vevent.get("STATUS", "")).upper() == "CANCELLED":
+                continue
+            event = self._to_ha_event(vevent, rrules)
+            if event is not None:
+                events.append(event)
         return events
 
     @staticmethod
@@ -251,28 +309,41 @@ class CalDavProvider(CalendarProvider):
         if "DTSTART" not in vevent:
             return None
         uid = str(vevent.get("UID", ""))
-        start = vevent["DTSTART"].dt
-        end = vevent["DTEND"].dt if "DTEND" in vevent else None
-        if end is None and "DURATION" in vevent:
-            end = start + vevent["DURATION"].dt
-        start, end = normalize_event_times(start, end)
-        recurrence_id = None
-        rrule = rrules.get(uid)
-        if rrule is not None and vevent.get("RECURRENCE-ID") is not None:
-            recurrence_id = format_recurrence_id(vevent["RECURRENCE-ID"].dt)
         try:
-            return CalendarEvent(
-                start=start,
-                end=end,
-                summary=str(vevent.get("SUMMARY", "")),
-                description=str(vevent["DESCRIPTION"]) if "DESCRIPTION" in vevent else None,
-                location=str(vevent["LOCATION"]) if "LOCATION" in vevent else None,
-                uid=uid,
-                recurrence_id=recurrence_id,
-                rrule=rrule if recurrence_id else None,
-            )
+            start = vevent["DTSTART"].dt
+            end = vevent["DTEND"].dt if "DTEND" in vevent else None
+            if end is None and "DURATION" in vevent:
+                end = start + vevent["DURATION"].dt
+            start, end = normalize_event_times(start, end)
+            recurrence_id = None
+            rrule = rrules.get(uid)
+            if rrule is not None and vevent.get("RECURRENCE-ID") is not None:
+                recurrence_id = format_recurrence_id(vevent["RECURRENCE-ID"].dt)
+            fields: dict[str, Any] = {
+                "start": start,
+                "end": end,
+                "summary": str(vevent.get("SUMMARY", "")),
+                "description": (
+                    str(vevent["DESCRIPTION"]) if "DESCRIPTION" in vevent else None
+                ),
+                "location": str(vevent["LOCATION"]) if "LOCATION" in vevent else None,
+                "uid": uid,
+                "recurrence_id": recurrence_id,
+            }
         except Exception as err:  # noqa: BLE001 - skip malformed server data
-            _LOGGER.debug("Skipping event %s: %s", uid, err)
+            _LOGGER.warning("Skipping event %s: %s", uid, err)
+            return None
+        if recurrence_id and rrule:
+            try:
+                return CalendarEvent(**fields, rrule=rrule)
+            except Exception as err:  # noqa: BLE001
+                # Home Assistant only accepts RRULEs that dateutil parses on
+                # their own; show the occurrence anyway.
+                _LOGGER.debug("Dropping RRULE %r of %s: %s", rrule, uid, err)
+        try:
+            return CalendarEvent(**fields)
+        except Exception as err:  # noqa: BLE001 - skip malformed server data
+            _LOGGER.warning("Skipping event %s: %s", uid, err)
             return None
 
     async def async_get_events(
