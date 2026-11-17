@@ -255,3 +255,39 @@ async def test_entity_kept_when_server_reports_other_host(
     assert reg is not None
     assert reg.unique_id == f"{entry.entry_id}_{stored}"
     assert hass.states.get(ENTITY).state != "unavailable"
+
+
+async def test_slow_server_retries_instead_of_blocking_startup(
+    hass: HomeAssistant, fake
+) -> None:
+    """iCloud not answering must not stall Home Assistant's startup."""
+    import asyncio
+
+    from homeassistant.config_entries import ConfigEntryState
+
+    async def hang(*_args):
+        await asyncio.sleep(3600)
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="iCloud (me@example.com)",
+        data={
+            "provider": "caldav",
+            "url": "https://caldav.icloud.com/",
+            "username": "me@example.com",
+            "password": "app-pass",
+            "verify_ssl": True,
+            "calendars": [CAL],
+        },
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch("custom_components.calendar_sync.SETUP_TIMEOUT", 0.05),
+        patch(
+            "custom_components.calendar_sync.caldav_provider.CalDavProvider.async_list_calendars",
+            hang,
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_RETRY

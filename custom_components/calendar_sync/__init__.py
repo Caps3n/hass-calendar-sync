@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import logging
 
@@ -32,6 +33,9 @@ from .models import (
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.CALENDAR]
+# Seconds setup may wait for the server, well below Home Assistant's own
+# startup limit, so a slow server leads to a retry instead of a stalled start.
+SETUP_TIMEOUT = 45
 
 
 @dataclass
@@ -71,11 +75,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: CalendarSyncConfigEntry)
     """Set up one account."""
     provider = await async_build_provider(hass, entry)
     try:
-        available = await provider.async_list_calendars()
+        async with asyncio.timeout(SETUP_TIMEOUT):
+            available = await provider.async_list_calendars()
     except ProviderAuthError as err:
         raise ConfigEntryAuthFailed(str(err)) from err
     except ProviderError as err:
         raise ConfigEntryNotReady(str(err)) from err
+    except TimeoutError as err:
+        raise ConfigEntryNotReady(
+            f"Server did not answer within {SETUP_TIMEOUT} seconds"
+        ) from err
 
     selected = list(entry.options.get(CONF_CALENDARS, entry.data.get(CONF_CALENDARS, [])))
     calendars = match_selected(available, selected)
@@ -91,7 +100,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: CalendarSyncConfigEntry)
         )
 
     coordinator = CalendarSyncCoordinator(hass, entry, provider, calendars)
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        async with asyncio.timeout(SETUP_TIMEOUT):
+            await coordinator.async_config_entry_first_refresh()
+    except TimeoutError as err:
+        raise ConfigEntryNotReady(
+            f"Loading events took longer than {SETUP_TIMEOUT} seconds"
+        ) from err
 
     entry.runtime_data = RuntimeData(provider, calendars, coordinator)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
