@@ -1,80 +1,70 @@
-"""In-memory stand-in for a caldav.Calendar.
+"""In-memory stand-in for a DavCalendar.
 
-Objects live at opaque URLs (not <uid>.ics) like on iCloud. With
-`reject_uid_search=True` the UID search fails with 412 like iCloud does.
+Objects live at opaque URLs (not <uid>.ics) like on iCloud. There is no UID
+search at all: like on iCloud, objects are found by URL or by scanning.
 """
 
 from __future__ import annotations
 
 import hashlib
 
-from caldav.lib import error
 import icalendar
 
-
-class FakeObject:
-    def __init__(self, store: "FakeCalendar", ical: str, url: str | None = None) -> None:
-        self._store = store
-        self.icalendar_instance = icalendar.Calendar.from_ical(ical)
-        self.url = url
-
-    @property
-    def uid(self) -> str:
-        return str(next(iter(self.icalendar_instance.walk("VEVENT")))["UID"])
-
-    def save(self):
-        if self.url is None:
-            self.url = self._store.url_for(self.uid)
-        self._store.objects[self.url] = self.icalendar_instance.to_ical().decode()
-        return self
-
-    def delete(self):
-        self._store.objects.pop(self.url)
+from custom_components.calendar_sync.dav import DavNotFound, DavObject
 
 
 class FakeCalendar:
     def __init__(self, reject_uid_search: bool = False) -> None:
-        self.objects: dict[str, str] = {}  # url -> ical
+        self.store: dict[str, str] = {}  # url -> ical
         self.url = "https://caldav.example.com/cal/home/"
         self.name = "Home"
         self.reject_uid_search = reject_uid_search
-        self.uid_searches = 0
+        self.uid_searches = 0  # kept for the tests; UID search is never used
+
+    @staticmethod
+    def _uid(ical: str) -> str:
+        cal = icalendar.Calendar.from_ical(ical)
+        return str(next(iter(cal.walk("VEVENT")))["UID"])
 
     def url_for(self, uid: str) -> str:
         return f"{self.url}{hashlib.sha1(uid.encode()).hexdigest()[:12]}.ics"
 
     def uids(self) -> set[str]:
-        return {FakeObject(self, ical).uid for ical in self.objects.values()}
+        return {self._uid(ical) for ical in self.store.values()}
 
     def ical_for(self, uid: str) -> str:
-        return next(i for i in self.objects.values() if FakeObject(self, i).uid == uid)
-
-    def get_supported_components(self):
-        return ["VEVENT"]
+        return next(i for i in self.store.values() if self._uid(i) == uid)
 
     def add(self, ical: str) -> None:
-        FakeObject(self, ical).save()
+        self.store[self.url_for(self._uid(ical))] = ical
 
-    def save_event(self, ical: str):
-        return FakeObject(self, ical).save()
+    def events(self) -> list[DavObject]:
+        return [
+            DavObject(url, None, icalendar.Calendar.from_ical(ical))
+            for url, ical in self.store.items()
+        ]
 
-    def event_by_url(self, href):
-        if href not in self.objects:
-            raise error.NotFoundError(href)
-        return FakeObject(self, self.objects[href], href)
+    # -- DavCalendar interface ---------------------------------------------
 
-    def event_by_uid(self, uid: str):
-        self.uid_searches += 1
-        if self.reject_uid_search:
-            raise error.ReportError("412 Precondition Failed")
-        for url, ical in self.objects.items():
-            obj = FakeObject(self, ical, url)
-            if obj.uid == uid:
-                return obj
-        raise error.NotFoundError(uid)
-
-    def events(self):
-        return [FakeObject(self, ical, url) for url, ical in self.objects.items()]
-
-    def search(self, start=None, end=None, event=True, expand=False):
+    async def search(self, start, end) -> list[DavObject]:
         return self.events()
+
+    async def objects(self) -> list[DavObject]:
+        return self.events()
+
+    async def get(self, href: str) -> DavObject:
+        if href not in self.store:
+            raise DavNotFound(href, 404)
+        return DavObject(href, None, icalendar.Calendar.from_ical(self.store[href]))
+
+    async def create(self, ical: icalendar.Calendar) -> DavObject:
+        text = ical.to_ical().decode()
+        href = self.url_for(self._uid(text))
+        self.store[href] = text
+        return DavObject(href, None, ical)
+
+    async def save(self, obj: DavObject) -> None:
+        self.store[obj.href] = obj.icalendar_instance.to_ical().decode()
+
+    async def delete(self, obj: DavObject) -> None:
+        self.store.pop(obj.href, None)

@@ -302,7 +302,11 @@ class _BrokenObject:
 async def test_broken_object_does_not_hide_other_events(setup) -> None:
     provider, fake = setup
     good = fake.events()
-    fake.search = lambda **_kw: [*good, _BrokenObject()]
+
+    async def search(*_args):
+        return [*good, _BrokenObject()]
+
+    fake.search = search
     summaries = {e.summary for e in await _events(provider)}
     assert summaries == {"Standup", "Dentist"}
 
@@ -310,7 +314,7 @@ async def test_broken_object_does_not_hide_other_events(setup) -> None:
 async def test_unexpected_error_becomes_provider_error(setup) -> None:
     provider, fake = setup
 
-    def boom(**_kw):
+    async def boom(*_args):
         raise RuntimeError("connection reset by niquests")
 
     fake.search = boom
@@ -361,10 +365,7 @@ def test_match_selected_keeps_stored_ids() -> None:
 
 async def test_requests_have_a_timeout(hass: HomeAssistant) -> None:
     """A server that never answers must not stall Home Assistant's startup."""
+    from custom_components.calendar_sync import dav
+
     provider = CalDavProvider(hass, "https://caldav.icloud.com/", "u", "p")
-    assert provider._dav is None  # created later, in the executor
-    client = provider._client
-    assert client.timeout == 30
-    if type(client.session).__module__.startswith("niquests"):
-        # HTTP/1.1 only, no OCSP lookups
-        assert client.session._revocation_configuration is None
+    assert provider._client._timeout.total == dav.REQUEST_TIMEOUT == 30

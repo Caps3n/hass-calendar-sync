@@ -2,25 +2,23 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timezone
 import logging
-import threading
 from typing import Any, TypeVar
 from urllib.parse import quote, urljoin
 import uuid
 
-import caldav
-from caldav.lib import error as caldav_error
 import icalendar
 import recurring_ical_events
-import requests
 
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .const import THIS_AND_FUTURE
+from .dav import DavAuthError, DavCalendar, DavClient, DavError, DavNotFound, DavObject
 from .models import (
     CalendarInfo,
     CalendarProvider,
@@ -40,8 +38,6 @@ _LOGGER = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 PRODID = "-//Calendar Sync for Home Assistant//EN"
-# Seconds a single CalDAV request may take before it is given up.
-REQUEST_TIMEOUT = 30
 
 
 def _to_ical_value(value: date | datetime) -> date | datetime:
@@ -169,40 +165,8 @@ def _occurrence_on_or_after(comp: icalendar.Event, occurrence: date | datetime) 
     return same_instant(rid, occ) or rid > occ
 
 
-def _make_client(url: str, username: str, password: str, verify_ssl: bool) -> Any:
-    """Create the DAVClient. Must run in the executor."""
-    # Without a timeout a server that does not answer blocks the request
-    # forever: setup then stalls Home Assistant's startup ("Bootstrap stage 2
-    # timeout") instead of failing and being retried later.
-    client = caldav.DAVClient(
-        url=url,
-        username=username,
-        password=password,
-        ssl_verify_cert=verify_ssl,
-        timeout=REQUEST_TIMEOUT,
-    )
-    session = getattr(client, "session", None)
-    if type(session).__module__.split(".")[0] == "niquests":
-        # caldav 3.x talks through niquests, which by default tries HTTP/2 and
-        # HTTP/3 (QUIC over UDP) and checks certificates via OCSP. Each of those
-        # can stall behind routers or firewalls; iCloud then seems not to
-        # answer. Plain HTTP/1.1 over TCP is what caldav 1.x/2.x used.
-        try:
-            import niquests  # noqa: PLC0415 - only present with caldav 3.x
-
-            client.session = niquests.Session(
-                disable_http2=True,
-                disable_http3=True,
-                revocation_configuration=None,
-            )
-            session.close()
-        except Exception:  # noqa: BLE001 - keep caldav's own session
-            _LOGGER.debug("Could not configure the niquests session", exc_info=True)
-    return client
-
-
 class CalDavProvider(CalendarProvider):
-    """Talks to a CalDAV server with the `caldav` library."""
+    """Talks to a CalDAV server (iCloud or any other)."""
 
     def __init__(
         self,
@@ -213,44 +177,32 @@ class CalDavProvider(CalendarProvider):
         verify_ssl: bool = True,
     ) -> None:
         self._hass = hass
-        self._settings = (url, username, password, verify_ssl)
-        # Created on first use inside the executor: caldav imports its HTTP
-        # client lazily, which Home Assistant flags as blocking in the loop.
-        self._dav: Any = None
-        self._calendars: dict[str, caldav.Calendar] = {}
+        self._client = DavClient(
+            async_get_clientsession(hass, verify_ssl=verify_ssl),
+            url,
+            username,
+            password,
+            verify_ssl,
+        )
+        self._calendars: dict[str, DavCalendar] = {}
         # (calendar id, UID) -> object URL, learned while reading. iCloud rejects
         # REPORT queries that filter by UID (412), so edits load objects by URL.
         self._hrefs: dict[tuple[str, str], str] = {}
-        # The dashboard asks for all calendars at once. One DAVClient (and its
-        # HTTP session) is shared by all of them and is not thread safe, so
-        # requests are made one after the other.
-        self._lock = threading.Lock()
 
-    @property
-    def _client(self) -> Any:
-        if self._dav is None:
-            self._dav = _make_client(*self._settings)
-        return self._dav
-
-    def _locked(self, func: Callable[..., _T], *args: Any) -> _T:
-        with self._lock:
-            return func(*args)
-
-    async def _run(self, func: Callable[..., _T], *args: Any) -> _T:
+    async def _run(self, func: Callable[..., Awaitable[_T]], *args: Any) -> _T:
         try:
-            return await self._hass.async_add_executor_job(self._locked, func, *args)
-        except caldav_error.AuthorizationError as err:
+            return await func(*args)
+        except DavAuthError as err:
             raise ProviderAuthError(str(err)) from err
         except ProviderError:
             raise
-        except (caldav_error.DAVError, requests.RequestException, ValueError) as err:
+        except (DavError, ValueError) as err:
             _LOGGER.debug("CalDAV request failed", exc_info=True)
             raise ProviderError(f"CalDAV request failed: {err}") from err
         except Exception as err:
-            # caldav 2.x/3.x raise transport errors of other HTTP libraries
-            # (niquests, httpx) and calendar data can trip icalendar or
-            # recurring-ical-events. Never let those escape as a bare exception:
-            # Home Assistant would only report an unknown error.
+            # Calendar data can trip icalendar or recurring-ical-events. Never
+            # let that escape as a bare exception: Home Assistant would only
+            # report an unknown error.
             _LOGGER.warning("CalDAV request failed unexpectedly", exc_info=True)
             raise ProviderError(
                 f"CalDAV request failed: {type(err).__name__}: {err}"
@@ -258,41 +210,33 @@ class CalDavProvider(CalendarProvider):
 
     # -- discovery ---------------------------------------------------------
 
-    def _list_calendars(self) -> list[CalendarInfo]:
-        principal = self._client.principal()
+    async def _list_calendars(self) -> list[CalendarInfo]:
         result = []
-        for cal in principal.calendars():
-            try:
-                components = cal.get_supported_components()
-            except Exception:  # noqa: BLE001 - not all servers report this
-                components = ["VEVENT"]
-            if "VEVENT" not in components:
-                continue
-            cal_id = str(cal.url)
-            self._calendars[cal_id] = cal
-            result.append(CalendarInfo(id=cal_id, name=cal.name or cal_id))
+        for info in await self._client.calendars():
+            self._calendars[info.url] = DavCalendar(self._client, info.url)
+            result.append(CalendarInfo(id=info.url, name=info.name, writable=info.writable))
         return result
 
     async def async_list_calendars(self) -> list[CalendarInfo]:
         return await self._run(self._list_calendars)
 
-    def _calendar(self, calendar_id: str) -> caldav.Calendar:
+    def _calendar(self, calendar_id: str) -> DavCalendar:
         if calendar_id not in self._calendars:
             key = calendar_key(calendar_id)
             found = next(
                 (cal for cal_id, cal in self._calendars.items() if calendar_key(cal_id) == key),
                 None,
             )
-            self._calendars[calendar_id] = found or self._client.calendar(url=calendar_id)
+            self._calendars[calendar_id] = found or DavCalendar(self._client, calendar_id)
         return self._calendars[calendar_id]
 
     # -- reading -----------------------------------------------------------
 
-    def _get_events(
+    async def _get_events(
         self, calendar_id: str, start: datetime, end: datetime
     ) -> list[CalendarEvent]:
         calendar = self._calendar(calendar_id)
-        objects = calendar.search(start=start, end=end, event=True, expand=False)
+        objects = await calendar.search(start, end)
         events: list[CalendarEvent] = []
         for obj in objects:
             try:
@@ -385,20 +329,19 @@ class CalDavProvider(CalendarProvider):
 
     # -- writing -----------------------------------------------------------
 
-    def _create(self, calendar_id: str, event: EventData) -> None:
+    async def _create(self, calendar_id: str, event: EventData) -> None:
         vevent = _new_vevent(event)
-        obj = self._calendar(calendar_id).save_event(_new_calendar(vevent).to_ical().decode())
-        if getattr(obj, "url", None) is not None:
-            self._hrefs[(calendar_id, str(vevent["UID"]))] = str(obj.url)
+        obj = await self._calendar(calendar_id).create(_new_calendar(vevent))
+        self._hrefs[(calendar_id, str(vevent["UID"]))] = obj.href
 
     async def async_create_event(self, calendar_id: str, event: EventData) -> None:
         await self._run(self._create, calendar_id, event)
 
-    def _load(self, calendar_id: str, uid: str) -> caldav.Event:
+    async def _load(self, calendar_id: str, uid: str) -> DavObject:
         """Find the object holding a UID, trying cheap lookups first."""
         calendar = self._calendar(calendar_id)
 
-        def has_uid(obj: Any) -> bool:
+        def has_uid(obj: DavObject) -> bool:
             return any(
                 str(c.get("UID")) == uid for c in obj.icalendar_instance.walk("VEVENT")
             )
@@ -409,29 +352,22 @@ class CalDavProvider(CalendarProvider):
         candidates.append(urljoin(calendar_id.rstrip("/") + "/", f"{quote(uid, safe='@')}.ics"))
         for href in candidates:
             try:
-                obj = calendar.event_by_url(href)
+                obj = await calendar.get(href)
                 if has_uid(obj):
                     return obj
-            except caldav_error.AuthorizationError:
+            except DavAuthError:
                 raise
-            except (caldav_error.DAVError, ValueError):
+            except DavError:
                 _LOGGER.debug("Lookup of %s by URL %s failed", uid, href)
 
-        try:
-            return calendar.event_by_uid(uid)
-        except caldav_error.AuthorizationError:
-            raise
-        except caldav_error.DAVError:
-            _LOGGER.debug("Server rejected UID search for %s, scanning calendar", uid)
-
-        for obj in calendar.events():
+        # iCloud rejects searches by UID (412), so scan the calendar instead.
+        for obj in await calendar.objects():
             if has_uid(obj):
-                if obj.url is not None:
-                    self._hrefs[(calendar_id, uid)] = str(obj.url)
+                self._hrefs[(calendar_id, uid)] = obj.href
                 return obj
         raise ValueError(f"Event {uid} not found")
 
-    def _update(
+    async def _update(
         self,
         calendar_id: str,
         uid: str,
@@ -439,7 +375,8 @@ class CalDavProvider(CalendarProvider):
         recurrence_id: str | None,
         recurrence_range: str | None,
     ) -> None:
-        obj = self._load(calendar_id, uid)
+        calendar = self._calendar(calendar_id)
+        obj = await self._load(calendar_id, uid)
         cal = obj.icalendar_instance
         master, overrides = _split_components(cal, uid)
         if master is None:
@@ -447,8 +384,7 @@ class CalDavProvider(CalendarProvider):
 
         if recurrence_id is None or _rrule_str(master) is None:
             _set_fields(master, event, keep_rrule=False)
-            obj.icalendar_instance = cal
-            obj.save()
+            await calendar.save(obj)
             return
 
         occurrence = parse_recurrence_id(recurrence_id)
@@ -459,14 +395,12 @@ class CalDavProvider(CalendarProvider):
                 # Editing from the first occurrence edits the whole series.
                 _set_fields(master, event, keep_rrule=not event.rrule)
                 _remove_overrides(cal, keep=lambda _c: False)
-                obj.icalendar_instance = cal
-                obj.save()
+                await calendar.save(obj)
                 return
             rrule = event.rrule or _rrule_str(master)
             _end_series_before(master, occurrence)
             _remove_overrides(cal, keep=lambda c: not _occurrence_on_or_after(c, occurrence))
-            obj.icalendar_instance = cal
-            obj.save()
+            await calendar.save(obj)
             new_event = EventData(
                 summary=event.summary,
                 start=event.start,
@@ -475,7 +409,7 @@ class CalDavProvider(CalendarProvider):
                 location=event.location,
                 rrule=rrule,
             )
-            self._create(calendar_id, new_event)
+            await self._create(calendar_id, new_event)
             return
 
         # A single occurrence: write (or rewrite) an override component.
@@ -497,8 +431,7 @@ class CalDavProvider(CalendarProvider):
             location=event.location,
         )
         _set_fields(target, single, keep_rrule=False)
-        obj.icalendar_instance = cal
-        obj.save()
+        await calendar.save(obj)
 
     async def async_update_event(
         self,
@@ -510,19 +443,20 @@ class CalDavProvider(CalendarProvider):
     ) -> None:
         await self._run(self._update, calendar_id, uid, event, recurrence_id, recurrence_range)
 
-    def _delete(
+    async def _delete(
         self,
         calendar_id: str,
         uid: str,
         recurrence_id: str | None,
         recurrence_range: str | None,
     ) -> None:
-        obj = self._load(calendar_id, uid)
+        calendar = self._calendar(calendar_id)
+        obj = await self._load(calendar_id, uid)
         cal = obj.icalendar_instance
         master, _overrides = _split_components(cal, uid)
 
         if recurrence_id is None or master is None or _rrule_str(master) is None:
-            obj.delete()
+            await calendar.delete(obj)
             return
 
         occurrence = parse_recurrence_id(recurrence_id)
@@ -531,7 +465,7 @@ class CalDavProvider(CalendarProvider):
 
         if recurrence_range == THIS_AND_FUTURE:
             if same_instant(rid_value, series_start):
-                obj.delete()
+                await calendar.delete(obj)
                 return
             _end_series_before(master, occurrence)
             _remove_overrides(cal, keep=lambda c: not _occurrence_on_or_after(c, occurrence))
@@ -541,8 +475,7 @@ class CalDavProvider(CalendarProvider):
             _remove_overrides(
                 cal, keep=lambda c: not same_instant(c["RECURRENCE-ID"].dt, rid_value)
             )
-        obj.icalendar_instance = cal
-        obj.save()
+        await calendar.save(obj)
 
     async def async_delete_event(
         self,
