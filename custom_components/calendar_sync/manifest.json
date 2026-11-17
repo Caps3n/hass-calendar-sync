@@ -1,14 +1,20 @@
 {
   "domain": "calendar_sync",
   "name": "Calendar Sync (Google & iCloud)",
-  "codeowners": ["@Caps3n"],
+  "codeowners": [
+    "@Caps3n"
+  ],
   "config_flow": true,
-  "dependencies": ["application_credentials"],
+  "dependencies": [
+    "application_credentials"
+  ],
   "documentation": "https://github.com/Caps3n/hass-calendar-sync",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/Caps3n/hass-calendar-sync/issues",
-  "loggers": ["caldav"],
-  "requirements": ["caldav>=1.4.0", "icalendar>=6.0.0", "recurring-ical-events>=3.0.0"],
-  "version": "1.0.2"
+  "requirements": [
+    "icalendar>=6.0.0",
+    "recurring-ical-events>=3.0.0"
+  ],
+  "version": "1.1.0"
 }

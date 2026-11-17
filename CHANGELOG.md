@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.0 – 2026-11-17
+
+- iCloud/CalDAV now uses its own small CalDAV client on Home Assistant's built-in HTTP session instead of the `caldav` library.
+  - Finding the calendars takes three requests, however many calendars and reminder lists the account has. Before, it made one or more requests per calendar and could run into "Server did not answer within 45 seconds".
+  - No more dependency on the `caldav` library and its HTTP stack (niquests), which changed a lot between versions.
+  - Reminder lists (task-only calendars) are no longer offered, and read-only calendars such as Birthdays are detected as read-only.
+
 ## 1.0.2 – 2026-11-17
 
 - Fix: iCloud setup failed with "Server did not answer within 45 seconds". With caldav 3.x the connection now uses plain HTTP/1.1 without HTTP/2, HTTP/3 (QUIC) and OCSP lookups, which can stall behind routers and firewalls.
