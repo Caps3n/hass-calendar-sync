@@ -40,6 +40,8 @@ _LOGGER = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 PRODID = "-//Calendar Sync for Home Assistant//EN"
+# Seconds a single CalDAV request may take before it is given up.
+REQUEST_TIMEOUT = 30
 
 
 def _to_ical_value(value: date | datetime) -> date | datetime:
@@ -179,8 +181,15 @@ class CalDavProvider(CalendarProvider):
         verify_ssl: bool = True,
     ) -> None:
         self._hass = hass
+        # Without a timeout a server that does not answer blocks the request
+        # forever: setup then stalls Home Assistant's startup ("Bootstrap stage 2
+        # timeout") instead of failing and being retried later.
         self._client = caldav.DAVClient(
-            url=url, username=username, password=password, ssl_verify_cert=verify_ssl
+            url=url,
+            username=username,
+            password=password,
+            ssl_verify_cert=verify_ssl,
+            timeout=REQUEST_TIMEOUT,
         )
         self._calendars: dict[str, caldav.Calendar] = {}
         # (calendar id, UID) -> object URL, learned while reading. iCloud rejects

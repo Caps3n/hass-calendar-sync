@@ -357,3 +357,9 @@ def test_match_selected_keeps_stored_ids() -> None:
     assert match_selected(available, stored) == [CalendarInfo(stored[0], "Marcel")]
     assert match_selected(available, []) == available
     assert calendar_key("me@gmail.com") == "me@gmail.com"
+
+
+async def test_requests_have_a_timeout(hass: HomeAssistant) -> None:
+    """A server that never answers must not stall Home Assistant's startup."""
+    provider = CalDavProvider(hass, "https://caldav.icloud.com/", "u", "p")
+    assert provider._client.timeout == 30
