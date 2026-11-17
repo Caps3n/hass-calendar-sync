@@ -169,6 +169,38 @@ def _occurrence_on_or_after(comp: icalendar.Event, occurrence: date | datetime) 
     return same_instant(rid, occ) or rid > occ
 
 
+def _make_client(url: str, username: str, password: str, verify_ssl: bool) -> Any:
+    """Create the DAVClient. Must run in the executor."""
+    # Without a timeout a server that does not answer blocks the request
+    # forever: setup then stalls Home Assistant's startup ("Bootstrap stage 2
+    # timeout") instead of failing and being retried later.
+    client = caldav.DAVClient(
+        url=url,
+        username=username,
+        password=password,
+        ssl_verify_cert=verify_ssl,
+        timeout=REQUEST_TIMEOUT,
+    )
+    session = getattr(client, "session", None)
+    if type(session).__module__.split(".")[0] == "niquests":
+        # caldav 3.x talks through niquests, which by default tries HTTP/2 and
+        # HTTP/3 (QUIC over UDP) and checks certificates via OCSP. Each of those
+        # can stall behind routers or firewalls; iCloud then seems not to
+        # answer. Plain HTTP/1.1 over TCP is what caldav 1.x/2.x used.
+        try:
+            import niquests  # noqa: PLC0415 - only present with caldav 3.x
+
+            client.session = niquests.Session(
+                disable_http2=True,
+                disable_http3=True,
+                revocation_configuration=None,
+            )
+            session.close()
+        except Exception:  # noqa: BLE001 - keep caldav's own session
+            _LOGGER.debug("Could not configure the niquests session", exc_info=True)
+    return client
+
+
 class CalDavProvider(CalendarProvider):
     """Talks to a CalDAV server with the `caldav` library."""
 
@@ -181,16 +213,10 @@ class CalDavProvider(CalendarProvider):
         verify_ssl: bool = True,
     ) -> None:
         self._hass = hass
-        # Without a timeout a server that does not answer blocks the request
-        # forever: setup then stalls Home Assistant's startup ("Bootstrap stage 2
-        # timeout") instead of failing and being retried later.
-        self._client = caldav.DAVClient(
-            url=url,
-            username=username,
-            password=password,
-            ssl_verify_cert=verify_ssl,
-            timeout=REQUEST_TIMEOUT,
-        )
+        self._settings = (url, username, password, verify_ssl)
+        # Created on first use inside the executor: caldav imports its HTTP
+        # client lazily, which Home Assistant flags as blocking in the loop.
+        self._dav: Any = None
         self._calendars: dict[str, caldav.Calendar] = {}
         # (calendar id, UID) -> object URL, learned while reading. iCloud rejects
         # REPORT queries that filter by UID (412), so edits load objects by URL.
@@ -199,6 +225,12 @@ class CalDavProvider(CalendarProvider):
         # HTTP session) is shared by all of them and is not thread safe, so
         # requests are made one after the other.
         self._lock = threading.Lock()
+
+    @property
+    def _client(self) -> Any:
+        if self._dav is None:
+            self._dav = _make_client(*self._settings)
+        return self._dav
 
     def _locked(self, func: Callable[..., _T], *args: Any) -> _T:
         with self._lock:

@@ -362,4 +362,9 @@ def test_match_selected_keeps_stored_ids() -> None:
 async def test_requests_have_a_timeout(hass: HomeAssistant) -> None:
     """A server that never answers must not stall Home Assistant's startup."""
     provider = CalDavProvider(hass, "https://caldav.icloud.com/", "u", "p")
-    assert provider._client.timeout == 30
+    assert provider._dav is None  # created later, in the executor
+    client = provider._client
+    assert client.timeout == 30
+    if type(client.session).__module__.startswith("niquests"):
+        # HTTP/1.1 only, no OCSP lookups
+        assert client.session._revocation_configuration is None

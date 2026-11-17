@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2 – 2026-11-17
+
+- Fix: iCloud setup failed with "Server did not answer within 45 seconds". With caldav 3.x the connection now uses plain HTTP/1.1 without HTTP/2, HTTP/3 (QUIC) and OCSP lookups, which can stall behind routers and firewalls.
+- Fix: "Detected blocking call to import_module" warning; the CalDAV client is now created in the executor.
+
 ## 1.0.1 – 2026-11-16
 
 - Fix: iCloud calendars could show "could not load events" for every calendar.
